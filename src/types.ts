@@ -101,7 +101,7 @@ export interface KeyStoreAdapter {
   /**
    * Adds a key to the store. If this is the first key, it becomes the current key.
    *
-   * @param id - A unique identifier for the key (e.g., `"key-2024-01"`).
+   * @param id - A unique identifier for the key (e.g., `"key-2026-01"`).
    * @param secret - A 32-byte `Uint8Array` key. Must pass entropy validation.
    * @throws {KeyError} If `secret` is not exactly 32 bytes or has insufficient entropy.
    */

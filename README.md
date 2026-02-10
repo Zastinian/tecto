@@ -35,7 +35,7 @@ const key = generateSecureKey();
 
 // 2. Set up the key store
 const store = new MemoryKeyStore();
-store.addKey("my-key-2024", key);
+store.addKey("my-key-2026", key);
 
 // 3. Create a coder
 const coder = new TectoCoder(store);
@@ -47,7 +47,7 @@ const token = coder.encrypt(
 );
 
 console.log(token);
-// → tecto.v1.my-key-2024.base64url_nonce.base64url_ciphertext
+// → tecto.v1.my-key-2026.base64url_nonce.base64url_ciphertext
 
 // 5. Decrypt it
 const payload = coder.decrypt(token);
@@ -181,12 +181,12 @@ const payload = coder.decrypt<MyType>(token);
 ## Key Rotation
 
 ```ts
-store.addKey("key-2024-01", key1);
+store.addKey("key-2026-01", key1);
 // ... time passes ...
-store.rotate("key-2024-06", key2);
+store.rotate("key-2026-06", key2);
 
-// New tokens use key-2024-06, old tokens still decrypt via key-2024-01
-store.removeKey("key-2024-01"); // after all old tokens expire
+// New tokens use key-2026-06, old tokens still decrypt via key-2026-01
+store.removeKey("key-2026-01"); // after all old tokens expire
 ```
 
 ## Testing

@@ -27,8 +27,8 @@ import type { KeyStoreAdapter } from "./types.js";
  * @example
  * ```ts
  * const store = new MemoryKeyStore();
- * store.addKey("key-2024-01", generateSecureKey());
- * const key = store.getKey("key-2024-01");
+ * store.addKey("key-2026-01", generateSecureKey());
+ * const key = store.getKey("key-2026-01");
  * ```
  */
 export class MemoryKeyStore implements KeyStoreAdapter {
@@ -38,7 +38,7 @@ export class MemoryKeyStore implements KeyStoreAdapter {
   /**
    * Adds a key to the store. If this is the first key, it becomes the current key.
    *
-   * @param id - A unique identifier for the key (e.g., `"key-2024-01"`).
+   * @param id - A unique identifier for the key (e.g., `"key-2026-01"`).
    * @param secret - A 32-byte `Uint8Array` key. Validated for entropy.
    * @throws {KeyError} If `secret` is not exactly 32 bytes or has insufficient entropy.
    *
