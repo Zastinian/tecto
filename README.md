@@ -37,8 +37,9 @@ const key = generateSecureKey();
 const store = new MemoryKeyStore();
 store.addKey("my-key-2026", key);
 
-// 3. Create a coder
+// 3. Create a coder (with optional custom maxPayloadSize)
 const coder = new TectoCoder(store);
+// or with custom config: new TectoCoder(store, { maxPayloadSize: 10 * 1024 * 1024 })
 
 // 4. Encrypt a payload
 const token = coder.encrypt(
@@ -140,24 +141,50 @@ class MyDatabaseKeyStore implements KeyStoreAdapter {
 ### `TectoCoder`
 
 ```ts
-const coder = new TectoCoder(store); // any KeyStoreAdapter
+const coder = new TectoCoder(store, options?); // any KeyStoreAdapter + optional config
 
 // Encrypt
-const token = coder.encrypt(payload, options?);
+const token = coder.encrypt(payload, signOptions?);
 
 // Decrypt
 const payload = coder.decrypt<MyType>(token);
 ```
 
+#### `TectoCoderOptions`
+
+Configuration for the `TectoCoder` instance:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `maxPayloadSize` | `number` | `1048576` (1 MB) | Maximum encrypted payload size in bytes. Prevents DoS via oversized tokens. |
+
+```ts
+// Custom 10 MB limit
+const coder = new TectoCoder(store, { maxPayloadSize: 10 * 1024 * 1024 });
+```
+
 #### `SignOptions`
 
-| Option | Type | Description |
-|---|---|---|
-| `expiresIn` | `string` | Duration string: `"1h"`, `"30m"`, `"7d"`, `"120s"` |
-| `issuer` | `string` | Sets the `iss` claim |
-| `audience` | `string` | Sets the `aud` claim |
-| `jti` | `string` | Custom token ID (auto-generated if omitted) |
-| `notBefore` | `string` | Duration string for `nbf` delay |
+Options for individual token encryption:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `expiresIn` | `string` | undefined | Duration string: `"1h"`, `"30m"`, `"7d"`, `"120s"`. If omitted, token never expires. |
+| `issuer` | `string` | undefined | Sets the `iss` claim |
+| `audience` | `string` | undefined | Sets the `aud` claim |
+| `jti` | `string` | auto-generated | Custom token ID (128-bit random UUID if omitted) |
+| `notBefore` | `string` | undefined | Duration string for `nbf` delay (token valid after N duration from `iat`) |
+
+```ts
+// Token that expires in 1 hour
+coder.encrypt({ userId: 42 }, { expiresIn: "1h" });
+
+// Token that never expires
+coder.encrypt({ userId: 42 });
+
+// Token that's valid 5 minutes from now
+coder.encrypt({ userId: 42 }, { notBefore: "5m", expiresIn: "1h" });
+```
 
 ### Error Classes
 
@@ -171,12 +198,33 @@ const payload = coder.decrypt<MyType>(token);
 
 ## Security Properties
 
+### Core Guarantees
+
 - **Opacity:** Tokens are encrypted, not just signed. Without the key, the payload is indistinguishable from random noise.
 - **Authenticated Encryption:** Poly1305 tag ensures integrity. Any modification to the ciphertext, nonce, or key ID causes immediate rejection.
-- **Unique Nonces:** Every `encrypt()` call generates a fresh 24-byte nonce from CSPRNG. XChaCha20's 192-bit nonce space makes collisions negligible.
 - **Generic Errors:** All decryption failures produce the same `InvalidSignatureError` to prevent padding/authentication oracles.
 - **Entropy Enforcement:** Keys are validated for length (32 bytes), non-zero, non-repeating, and minimum byte diversity.
 - **Timing-Safe Comparison:** `constantTimeCompare()` prevents timing side-channels when comparing secrets.
+- **Type Validation:** Registered claims (`exp`, `nbf`, `iat`, `jti`, `iss`, `aud`) are type-checked during deserialization to prevent type confusion attacks.
+- **Payload Size Limits:** Configurable maximum payload size (default 1 MB) prevents DoS via oversized tokens.
+- **Plaintext Cleanup:** Plaintext buffers are zeroed after encryption/decryption (best-effort).
+- **Key Cloning:** `getKey()` returns defensive clones to prevent accidental mutation of stored keys.
+
+### Nonce Collision Bounds
+
+Every `encrypt()` call generates a fresh 24-byte nonce from CSPRNG. XChaCha20's 192-bit nonce space provides:
+
+- **Birthday bound:** ~2^96 messages per key before collision becomes statistically likely
+- **Recommendation:** Rotate keys before ~1 billion encryptions or at least daily (whichever comes first)
+- Without rotation, nonce collision risk increases significantly after exceeding the birthday bound
+
+### JTI & Replay Protection
+
+The `jti` claim provides **detection**, not **prevention**, of token replay:
+
+- Generated as 128-bit random UUID (~2^64 collision birthday bound)
+- For robust replay protection, implement a separate blacklist/allowlist mechanism
+- Track JTI values within the token's expiration window (`exp - iat`)
 
 ## Key Rotation
 
