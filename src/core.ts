@@ -28,21 +28,24 @@ import {
   TokenExpiredError,
   TokenNotActiveError,
 } from "./errors.js";
-import type { KeyStoreAdapter, SignOptions, TectoPayload } from "./types.js";
+import type { KeyStoreAdapter, SignOptions, TectoCoderOptions, TectoPayload } from "./types.js";
 
 const TECTO_PREFIX = "tecto";
 const TECTO_VERSION = "v1";
 const NONCE_LENGTH = 24;
 const SEGMENT_COUNT = 5;
+const DEFAULT_MAX_PAYLOAD_SIZE = 1024 * 1024;
+const VALID_KID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 /**
  * Parses a human-readable duration string into seconds.
  *
  * @param duration - A string like `"1h"`, `"30m"`, `"7d"`, `"120s"`.
  * @returns The duration in seconds.
- * @throws {TectoError} If the format is invalid.
+ * @throws {TectoError} If the format is invalid or exceeds maximum allowed value.
  *
  * @security Strict regex prevents injection of unexpected values.
+ * Duration is capped at 10 years to prevent overflow and unrealistic values.
  */
 function parseDuration(duration: string): number {
   const match = /^(\d+)\s*(s|m|h|d)$/i.exec(duration);
@@ -68,23 +71,28 @@ function parseDuration(duration: string): number {
     throw new TectoError(`Unknown duration unit: "${unit}"`, "TECTO_INVALID_DURATION");
   }
 
-  return value * multiplier;
+  const result = value * multiplier;
+  const MAX_DURATION = 86400 * 365 * 10;
+  if (result > MAX_DURATION) {
+    throw new TectoError(
+      `Duration exceeds maximum allowed value of 10 years: "${duration}"`,
+      "TECTO_INVALID_DURATION",
+    );
+  }
+
+  return result;
 }
 
 /**
  * Generates a v4-style random identifier for the `jti` claim.
  *
- * @returns A hex-encoded random string (32 hex characters = 128 bits).
+ * @returns A UUID v4 string without hyphens (32 hex characters = 128 bits).
  *
- * @security Uses CSPRNG. The 128-bit space provides sufficient collision
- * resistance for JWT ID purposes (~2^64 birthday bound).
+ * @security Uses CSPRNG via `crypto.randomUUID()`. The 128-bit space
+ * provides sufficient collision resistance for JWT ID purposes (~2^64 birthday bound).
  */
 function generateJti(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return crypto.randomUUID().replace(/-/g, "");
 }
 
 /**
@@ -93,8 +101,17 @@ function generateJti(): string {
  *
  * @security
  * - Every `encrypt()` call generates a unique 24-byte nonce from CSPRNG.
+ *   XChaCha20's 192-bit nonce space provides ~2^96 birthday bound per key.
+ *   Rotate keys frequently (e.g., daily/weekly) to stay well below collision risk.
  * - Every `decrypt()` failure throws a generic `InvalidSignatureError`.
- * - `exp` and `nbf` claims are validated automatically after decryption.
+ * - `exp`, `nbf`, `iat` claims are validated for correct types (number) to prevent
+ *   type confusion attacks. Custom field types are NOT validated.
+ * - Registered claims (`exp`, `nbf`, `iat`, `jti`, `iss`, `aud`) are type-checked
+ *   during deserialization.
+ * - Plaintext buffers are zeroed after encryption and decryption.
+ * - Payloads are limited to 1 MB to prevent DoS via oversized tokens.
+ * - JTI is for token replay detection, not prevention. Use a separate
+ *   blacklist/allowlist for robust replay protection.
  *
  * @example
  * ```ts
@@ -108,14 +125,26 @@ function generateJti(): string {
  */
 export class TectoCoder {
   private readonly keyStore: KeyStoreAdapter;
+  private readonly maxPayloadSize: number;
 
   /**
    * Creates a new `TectoCoder` bound to the given key store.
    *
    * @param keyStore - Any implementation of `KeyStoreAdapter`.
+   * @param options - Optional configuration (e.g., custom maxPayloadSize).
+   *
+   * @example
+   * ```ts
+   * const coder = new TectoCoder(store, { maxPayloadSize: 10 * 1024 * 1024 });
+   * ```
    */
-  constructor(keyStore: KeyStoreAdapter) {
+  constructor(keyStore: KeyStoreAdapter, options?: TectoCoderOptions) {
     this.keyStore = keyStore;
+    this.maxPayloadSize = options?.maxPayloadSize ?? DEFAULT_MAX_PAYLOAD_SIZE;
+
+    if (!Number.isInteger(this.maxPayloadSize) || this.maxPayloadSize <= 0) {
+      throw new TectoError("maxPayloadSize must be a positive integer", "TECTO_INVALID_CONFIG");
+    }
   }
 
   /**
@@ -162,14 +191,23 @@ export class TectoCoder {
 
     const plaintext = new TextEncoder().encode(JSON.stringify(claims));
 
+    if (plaintext.byteLength > this.maxPayloadSize) {
+      throw new TectoError(
+        `Payload exceeds maximum size of ${this.maxPayloadSize} bytes`,
+        "TECTO_PAYLOAD_TOO_LARGE",
+      );
+    }
+
     const nonce = new Uint8Array(NONCE_LENGTH);
     crypto.getRandomValues(nonce);
 
     const cipher = xchacha20poly1305(key, nonce);
     const ciphertext = cipher.encrypt(plaintext);
 
-    const nonceB64 = base64url.encode(nonce);
-    const ciphertextB64 = base64url.encode(ciphertext);
+    plaintext.fill(0);
+
+    const nonceB64 = base64url.encode(nonce).replace(/=+$/, "");
+    const ciphertextB64 = base64url.encode(ciphertext).replace(/=+$/, "");
 
     return `${TECTO_PREFIX}.${TECTO_VERSION}.${kid}.${nonceB64}.${ciphertextB64}`;
   }
@@ -215,6 +253,10 @@ export class TectoCoder {
       throw new InvalidSignatureError();
     }
 
+    if (!kid || !VALID_KID_PATTERN.test(kid)) {
+      throw new InvalidSignatureError();
+    }
+
     let key: Uint8Array;
     try {
       key = this.keyStore.getKey(kid);
@@ -225,8 +267,9 @@ export class TectoCoder {
     let nonce: Uint8Array;
     let ciphertext: Uint8Array;
     try {
-      nonce = base64url.decode(nonceB64);
-      ciphertext = base64url.decode(ciphertextB64);
+      const pad = (s: string) => s + "=".repeat((4 - (s.length % 4)) % 4);
+      nonce = base64url.decode(pad(nonceB64));
+      ciphertext = base64url.decode(pad(ciphertextB64));
     } catch {
       throw new InvalidSignatureError();
     }
@@ -248,6 +291,27 @@ export class TectoCoder {
       const decoded = new TextDecoder().decode(plaintext);
       payload = JSON.parse(decoded) as TectoPayload<T>;
     } catch {
+      throw new InvalidSignatureError();
+    } finally {
+      plaintext.fill(0);
+    }
+
+    if (typeof payload.exp !== "undefined" && typeof payload.exp !== "number") {
+      throw new InvalidSignatureError();
+    }
+    if (typeof payload.nbf !== "undefined" && typeof payload.nbf !== "number") {
+      throw new InvalidSignatureError();
+    }
+    if (typeof payload.iat !== "undefined" && typeof payload.iat !== "number") {
+      throw new InvalidSignatureError();
+    }
+    if (typeof payload.jti !== "undefined" && typeof payload.jti !== "string") {
+      throw new InvalidSignatureError();
+    }
+    if (typeof payload.iss !== "undefined" && typeof payload.iss !== "string") {
+      throw new InvalidSignatureError();
+    }
+    if (typeof payload.aud !== "undefined" && typeof payload.aud !== "string") {
       throw new InvalidSignatureError();
     }
 

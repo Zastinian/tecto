@@ -21,7 +21,14 @@ export interface TectoRegisteredClaims {
   readonly nbf?: number;
   /** Issued-at time (Unix timestamp in seconds). */
   readonly iat?: number;
-  /** Unique token identifier for replay protection. */
+  /**
+   * Unique token identifier (`jti`). Used for replay detection (not prevention).
+   *
+   * @security JTI is a 128-bit random identifier generated via CSPRNG.
+   * Birthday bound suggests collision at ~2^64 tokens. For robust replay protection,
+   * implement a separate blacklist/allowlist mechanism and track JTI values
+   * within their expiration window (`exp` - `iat`).
+   */
   readonly jti?: string;
   /** Issuer identifier. */
   readonly iss?: string;
@@ -42,11 +49,28 @@ export type TectoPayload<T extends Record<string, unknown> = Record<string, unkn
   TectoRegisteredClaims & T;
 
 /**
+ * Configuration options for TectoCoder instance.
+ *
+ * @security These options control codec-level security parameters like
+ * maximum payload size. Configure these based on your application's needs.
+ */
+export interface TectoCoderOptions {
+  /**
+   * Maximum allowed payload size in bytes. Prevents DoS via oversized tokens.
+   *
+   * @default 1048576 (1 MB)
+   * @example 10485760 for 10 MB limit
+   */
+  readonly maxPayloadSize?: number;
+}
+
+/**
  * Options for token encryption (signing).
  *
  * @security The `expiresIn` field accepts human-readable duration strings
  * (e.g., `"1h"`, `"30m"`, `"7d"`) and is converted to an absolute `exp`
- * claim internally. Always prefer short-lived tokens.
+ * claim internally. If omitted, the token never expires (infinite lifetime).
+ * For security, consider always setting an expiration.
  */
 export interface SignOptions {
   /**

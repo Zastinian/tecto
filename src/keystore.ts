@@ -23,11 +23,16 @@ import type { KeyStoreAdapter } from "./types.js";
  * - On `removeKey()`, the key buffer is zeroed before deletion.
  * - `rotate()` adds a new key without removing old ones, so existing tokens
  *   encrypted under previous keys remain decryptable during the rotation window.
+ * - **Nonce reuse prevention**: Rotate keys before encrypting ~2^96 messages
+ *   (XChaCha20's birthday bound). For most applications, rotate daily or weekly.
+ *   Without rotation, nonce collision becomes statistically likely after ~2^96 encryptions.
  *
  * @example
  * ```ts
  * const store = new MemoryKeyStore();
  * store.addKey("key-2026-01", generateSecureKey());
+ * // Rotate after 1 week or ~1 billion encryptions, whichever comes first
+ * store.rotate("key-2026-02", generateSecureKey());
  * const key = store.getKey("key-2026-01");
  * ```
  */
@@ -61,18 +66,19 @@ export class MemoryKeyStore implements KeyStoreAdapter {
    * Retrieves a key by its identifier.
    *
    * @param id - The key identifier to look up.
-   * @returns The key as a `Uint8Array`.
+   * @returns A defensive clone of the key as a `Uint8Array`.
    * @throws {KeyError} If no key exists with the given identifier.
    *
-   * @security Returns a reference to the internal buffer. Do NOT
-   * modify or zero the returned array — use `removeKey()` for revocation.
+   * @security Returns a defensive clone to prevent accidental mutation
+   * of the internal key material. The caller is free to zero or modify
+   * the returned array without affecting the stored key.
    */
   getKey(id: string): Uint8Array {
     const key = this.keys.get(id);
     if (!key) {
       throw new KeyError(`Key not found: "${id}"`);
     }
-    return key;
+    return new Uint8Array(key);
   }
 
   /**

@@ -34,12 +34,14 @@ export class TectoError extends Error {
  * @security This is safe to throw distinctly from `InvalidSignatureError`
  * because expiration is checked *after* successful decryption and
  * authentication, so no ciphertext oracle is possible.
+ * The actual expiration date is stored but not exposed in the message
+ * to prevent timing analysis.
  */
 export class TokenExpiredError extends TectoError {
   public readonly expiredAt: Date;
 
   constructor(expiredAt: Date) {
-    super("Token has expired", "TECTO_TOKEN_EXPIRED");
+    super("Token is invalid", "TECTO_TOKEN_EXPIRED");
     this.name = "TokenExpiredError";
     this.expiredAt = expiredAt;
   }
@@ -79,12 +81,14 @@ export class KeyError extends TectoError {
  *
  * @security Like `TokenExpiredError`, this is checked after successful
  * decryption so it does not leak ciphertext information.
+ * The actual activation date is stored but not exposed in the message
+ * to prevent timing analysis.
  */
 export class TokenNotActiveError extends TectoError {
   public readonly activeAt: Date;
 
   constructor(activeAt: Date) {
-    super("Token is not yet active", "TECTO_TOKEN_NOT_ACTIVE");
+    super("Token is invalid", "TECTO_TOKEN_NOT_ACTIVE");
     this.name = "TokenNotActiveError";
     this.activeAt = activeAt;
   }

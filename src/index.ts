@@ -17,4 +17,4 @@ export {
 } from "./errors.js";
 export { MemoryKeyStore } from "./keystore.js";
 export { assertEntropy, constantTimeCompare, generateSecureKey } from "./security.js";
-export type { KeyStoreAdapter, SignOptions, TectoPayload, TectoRegisteredClaims } from "./types.js";
+export type { KeyStoreAdapter, SignOptions, TectoCoderOptions, TectoPayload, TectoRegisteredClaims } from "./types.js";
