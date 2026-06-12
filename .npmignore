@@ -9,3 +9,4 @@ bun.lock
 tsup.config.ts
 tsconfig.json
 .npmignore
+bunfig.toml
