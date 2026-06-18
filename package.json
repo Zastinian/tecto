@@ -39,8 +39,8 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "tsup",
-    "test": "bun test"
+    "build": "tsdown",
+    "test": "tsdown --watch"
   },
   "type": "commonjs",
   "types": "./dist/index.d.ts"
